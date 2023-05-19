@@ -11,7 +11,7 @@ FILE_CHUNK_LENGTH = 16384 #The number of characters the read from the input file
 class Node:
     """Defines a node in a huffman tree"""
     
-    symbol: str = field(compare = False)
+    symbol: bytes = field(compare = False)
     count: int = field(compare = True)
     left: Node = field(default = None, compare = False)
     right: Node = field(default = None, compare = False)
@@ -35,7 +35,7 @@ class Node:
         
         if self.is_leaf():
             _binary += '1'
-            _binary += f"{ord(self.symbol):08b}"
+            _binary += f"{self.symbol:08b}"
        
             return _binary
         else:
@@ -52,7 +52,7 @@ class Node:
         bit = next(binary_iterator)
         if bit == '1':
             byte = "".join(next(binary_iterator) for _ in range(8))
-            char = chr(int(byte, 2))
+            char = int(byte, 2).to_bytes(1, "big")
 
             return Node(char, 0)
 
@@ -88,18 +88,18 @@ class Node:
         return root
 
 
-def count(text: str) -> Dict[str, int]:
-    """Returns a character count dictionary from text"""
+def count(data: bytes) -> Dict[str, int]:
+    """Returns a character count dictionary from data"""
     
-    char_count = {}
+    byte_count = {}
 
-    for char in text:
-        if char_count.get(char):
-            char_count[char] += 1
+    for byte in data:
+        if byte_count.get(byte):
+            byte_count[byte] += 1
         else:
-            char_count[char] = 1
+            byte_count[byte] = 1
 
-    return char_count
+    return byte_count
 
 
 def padded(binary: str) -> Tuple[str, str]:
@@ -114,12 +114,12 @@ def padded(binary: str) -> Tuple[str, str]:
     return binary
 
 
-def encode_text(text: str, codes: Dict[str, str]) -> str:
+def encode_bytes(data: str, codes: Dict[str, str]) -> str:
     """Encodes text as a binary string"""
     
     binary = ""
-    for char in text:
-        binary += codes[char]
+    for byte in data:
+        binary += codes[byte]
 
     return binary
 
@@ -147,86 +147,89 @@ def to_bits(binary: bytes) -> str:
     return bits
 
 
-def decode_text(binary_iterator: iter, codes: Dict[str, str], num_chars: int) -> str:
+def decode_bytes(binary_iterator: iter, codes: Dict[str, bytes], num_bytes: int) -> bytes:
     """Decodes binary string"""
     
     num_decoded = 0
-    char_bits = ""
-    text = ""
+    bits = ""
+    data = b""
 
-    while num_decoded != num_chars:
-        char_bits += next(binary_iterator)
+    while num_decoded != num_bytes:
+        bits += next(binary_iterator)
 
-        char = codes.get(char_bits)
-        if char:
-            text += char
+        byte = codes.get(bits)
+        if byte:
+            data += byte
             num_decoded += 1
-            char_bits = ""
+            bits = ""
 
-    return text
+    return data
+
+def compress(data: bytes):
+    codes = {}
+    byte_count = count(data)
+    tree = Node.create_tree(byte_count)
+    tree.extract_codes(codes)
+
+    encoded_data = padded(encode_bytes(data, codes))
+    encoded_tree = padded(tree.encode_tree())
+
+    tree_bit_size = 10 * len(byte_count) - 1
+    padding_size = 8 - tree_bit_size % 8
+    tree_byte_size = (tree_bit_size + padding_size) // 8 
+
+    tree_size = f"{tree_byte_size:016b}"
+    data_size = f"{len(data):016b}"
+    encoded_data_size = f"{len(encoded_data) // 8:016b}"
+    header = tree_size + data_size + encoded_data_size
+
+    compressed_bytes = to_bytes(header + encoded_tree + encoded_data)
+
+    return compressed_bytes
 
 
-def compress(filepath: str) -> None:
-    """Takes a filepath as input and compresses the corresponding .txt file, producing a compressed .letter file"""
-    
+def compress_file(filepath: str) -> None:
     name, extension = filepath.split('.')
-    output_filepath = name + ".letter"
+    output_filepath = name + '_' + extension + ".letter"
 
-    with open(filepath, 'r') as input_file, open(output_filepath, "wb") as output_file:
-        while (text := input_file.read(FILE_CHUNK_LENGTH)) != '':
-            #Encodes data
-            codes = {}
-            letter_count = count(text)
-            tree = Node.create_tree(letter_count)
-            tree.extract_codes(codes)
-
-            encoded_text = padded(encode_text(text, codes))
-            encoded_tree = padded(tree.encode_tree())
-
-            #Creates header information
-            tree_bit_size = 10 * len(letter_count) - 1
-            padding_size = 8 - tree_bit_size % 8
-            tree_byte_size = (tree_bit_size + padding_size) // 8 
-
-            tree_size = f"{tree_byte_size:016b}"
-            text_size = f"{len(text):016b}"
-            encoded_text_size = f"{len(encoded_text) // 8:016b}"
-            header = tree_size + text_size + encoded_text_size
-
-            #Writes encoded data
-            compressed_bytes = to_bytes(header + encoded_tree + encoded_text)
-
+    with open(filepath, "rb") as input_file, open(output_filepath, "wb") as output_file:
+        while (data := input_file.read(FILE_CHUNK_LENGTH)) != b'':
+            compressed_bytes = compress(data)
             output_file.write(compressed_bytes)
 
 
-def decompress(filepath: str) -> None:
-    """Takes a filepath as input and decompresses the corresponding .letter file, producing an uncompressed .txt file"""
-    
+def decompress(data: bytes, tree_data: bytes):
+    encoded_data = to_bits(data)
+    encoded_tree = to_bits(tree_data)
+
+    codes = {}
+    tree = Node.decode_tree(iter(encoded_tree))
+    tree.extract_codes(codes)
+    inverted_codes = {value: key for key, value in codes.items()}
+
+    decompressed_bytes = decode_bytes(iter(encoded_data), inverted_codes, len(data))
+
+    return decompressed_bytes
+
+
+def decompress_file(filepath: str) -> None:
     name, extension = filepath.split('.')
-    output_filepath = name + "_decompressed.txt"
+    original_name, original_extension = name.rsplit('_', 1)
+    output_filepath = original_name + '.' + original_extension
 
-    with open(filepath, "rb") as input_file, open(output_filepath, 'w') as output_file:
+    with open(filepath, "rb") as input_file, open(output_filepath, 'wb') as output_file:
         while (header := input_file.read(6)) != b'':
-            #Reads header information
             tree_byte_size = int.from_bytes(header[:2], "big")
-            text_size = int.from_bytes(header[2:4], "big")
-            text_byte_size = int.from_bytes(header[4:], "big")
+            data_size = int.from_bytes(header[2:4], "big")
+            data_byte_size = int.from_bytes(header[4:], "big")
 
-            #Reads encoded data
-            encoded_tree = to_bits(input_file.read(tree_byte_size))
-            encoded_text = to_bits(input_file.read(text_byte_size))
+            tree_data = input_file.read(tree_byte_size)
+            data = input_file.read(data_byte_size)
 
-            #Decodes encoded data
-            codes = {}
-            tree = Node.decode_tree(iter(encoded_tree))
-            tree.extract_codes(codes)
-            inverted_codes = {value: key for key, value in codes.items()}
+            decompressed_bytes = decompress(data, tree_data)
 
-            decoded_text = decode_text(iter(encoded_text), inverted_codes, text_size)
-
-            #writes decoded data
-            output_file.write(decoded_text)
-           
+            output_file.write(decompressed_bytes)
+    
 
 if __name__ == "__main__":
-    pass
+    compress_file("a.txt")
