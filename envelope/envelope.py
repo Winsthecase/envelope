@@ -64,7 +64,7 @@ class Node:
             
     @staticmethod
     def create_tree(count: Dict[str, int]) -> Node:
-        """Builds huffman tree from a character count dictionary"""
+        """Builds huffman tree from a byte count dictionary"""
         
         nodes = [Node(symbol, value) for symbol, value in count.items()]
         heapify(nodes)
@@ -89,7 +89,7 @@ class Node:
 
 
 def count(data: bytes) -> Dict[str, int]:
-    """Returns a character count dictionary from data"""
+    """Returns a byte count dictionary from data"""
     
     byte_count = {}
 
@@ -166,6 +166,8 @@ def decode_bytes(binary_iterator: iter, codes: Dict[str, bytes], num_bytes: int)
     return data
 
 def compress(data: bytes):
+    "Compresses an array of bytes"
+    
     codes = {}
     byte_count = count(data)
     tree = Node.create_tree(byte_count)
@@ -189,6 +191,8 @@ def compress(data: bytes):
 
 
 def compress_file(filepath: str) -> None:
+    """Compresses file, producing a compressed .letter file"""
+    
     name, extension = filepath.split('.')
     output_filepath = name + '_' + extension + ".letter"
 
@@ -199,6 +203,8 @@ def compress_file(filepath: str) -> None:
 
 
 def decompress(data: bytes, tree_data: bytes):
+    """Decompresses an array of bytes"""
+    
     encoded_data = to_bits(data)
     encoded_tree = to_bits(tree_data)
 
@@ -213,6 +219,8 @@ def decompress(data: bytes, tree_data: bytes):
 
 
 def decompress_file(filepath: str) -> None:
+    """Decompresses a .letter file, producing the original file"""
+    
     name, extension = filepath.split('.')
     original_name, original_extension = name.rsplit('_', 1)
     output_filepath = original_name + '.' + original_extension
@@ -232,4 +240,4 @@ def decompress_file(filepath: str) -> None:
     
 
 if __name__ == "__main__":
-    compress_file("a.txt")
+    decompress_file("python_jpg.letter")
